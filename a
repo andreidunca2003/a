@@ -5,12 +5,13 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <errno.h>
 
 void process_directory(const char *path);
 
 void handle_file(const char *filepath) {
     pid_t pid = fork();
-    
+
     if (pid == -1) {
         perror("fork");
         exit(EXIT_FAILURE);
