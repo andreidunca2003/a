@@ -1,0 +1,108 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dirent.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+void process_directory(const char *path);
+
+void handle_file(const char *filepath) {
+    pid_t pid = fork();
+    
+    if (pid == -1) {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    } else if (pid == 0) {
+        // Child process
+        printf("File: %s\n", filepath);
+        exit(0);
+    } else {
+        // Parent process
+        wait(NULL); // Wait for the child process to finish
+    }
+}
+
+void handle_directory(const char *dirpath) {
+    printf("Directory: %s\n", dirpath);
+    
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        perror("pipe");
+        exit(EXIT_FAILURE);
+    }
+
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    } else if (pid == 0) {
+        // Child process
+        close(pipefd[0]); // Close unused read end
+        dup2(pipefd[1], STDOUT_FILENO); // Redirect stdout to pipe write end
+        close(pipefd[1]);
+
+        // Change directory to the target directory
+        if (chdir(dirpath) == -1) {
+            perror("chdir");
+            exit(EXIT_FAILURE);
+        }
+
+        execl("./list_permissions.sh", "./list_permissions.sh", NULL);
+        perror("execl"); // exec only returns on error
+        exit(EXIT_FAILURE);
+    } else {
+        // Parent process
+        close(pipefd[1]); // Close unused write end
+
+        char buffer[1024];
+        ssize_t bytesRead;
+        while ((bytesRead = read(pipefd[0], buffer, sizeof(buffer) - 1)) > 0) {
+            buffer[bytesRead] = '\0';
+            printf("%s", buffer);
+        }
+        close(pipefd[0]);
+
+        wait(NULL); // Wait for child process to finish
+    }
+}
+
+void process_directory(const char *path) {
+    DIR *dir;
+    struct dirent *entry;
+
+    if ((dir = opendir(path)) == NULL) {
+        perror("opendir");
+        return;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        char fullpath[1024];
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        // Use snprintf to avoid buffer overflow
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", path, entry->d_name);
+        
+        if (entry->d_type == DT_DIR) {
+            handle_directory(fullpath);
+        } else if (entry->d_type == DT_REG) {
+            handle_file(fullpath);
+        } else {
+            // Handle other types if necessary (symlinks, sockets, etc.)
+        }
+    }
+    closedir(dir);
+}
+
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <directory>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    process_directory(argv[1]);
+    return 0;
+}
